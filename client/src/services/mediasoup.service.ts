@@ -113,24 +113,88 @@ export class MediasoupService {
         }
 
         // Get the consumer and update its state
-        const consumer = this.consumers.get(
-          `${data.participantId}-${data.kind}`
-        );
+        const consumerKey = `${data.participantId}-${data.kind}`;
+        console.log(`Looking for consumer with key: ${consumerKey}`);
+        console.log("Current consumers:", Array.from(this.consumers.keys()));
+
+        const consumer = this.consumers.get(consumerKey);
         if (consumer) {
           try {
             if (data.enabled) {
+              console.log(
+                `Resuming consumer ${consumer.id} for ${data.participantId}`
+              );
               await consumer.resume();
-              console.log(
-                `Resumed ${data.kind} consumer for ${data.participantId}`
-              );
             } else {
-              await consumer.pause();
               console.log(
-                `Paused ${data.kind} consumer for ${data.participantId}`
+                `Pausing consumer ${consumer.id} for ${data.participantId}`
               );
+              await consumer.pause();
             }
           } catch (error) {
             console.error(`Error updating consumer state:`, error);
+          }
+        } else {
+          // If consumer not found, try to create it
+          console.log(
+            `Consumer not found for ${consumerKey}, checking if we need to create it`
+          );
+
+          // If this is our own media state change, we should have the producer
+          if (data.participantId === this.participantId) {
+            const producer = this.producers.get(
+              `${this.participantId}-${data.kind}`
+            );
+            if (producer) {
+              console.log(
+                `Found our own producer ${producer.id} for ${data.kind}`
+              );
+              try {
+                if (data.enabled) {
+                  await producer.resume();
+                } else {
+                  await producer.pause();
+                }
+                console.log(`Updated producer state for ${data.kind}`);
+              } catch (error) {
+                console.error(`Error updating producer state:`, error);
+              }
+            } else {
+              console.log(
+                `No producer found for ${this.participantId}-${data.kind}`
+              );
+            }
+          } else {
+            // For other participants, we need to create a consumer
+            const producer = this.producers.get(
+              `${data.participantId}-${data.kind}`
+            );
+            if (producer) {
+              console.log(`Found producer ${producer.id} for ${data.kind}`);
+              try {
+                const consumer = await this.consumeStream(
+                  producer.id,
+                  data.participantId,
+                  data.kind as "audio" | "video"
+                );
+                if (consumer) {
+                  console.log(
+                    `Successfully created consumer for ${data.participantId}-${data.kind}`
+                  );
+                  if (data.enabled) {
+                    await consumer.resume();
+                  } else {
+                    await consumer.pause();
+                  }
+                }
+              } catch (error) {
+                console.error(`Error creating consumer:`, error);
+              }
+            } else {
+              console.log(
+                `No producer found for ${data.participantId}-${data.kind}`
+              );
+            }
           }
         }
       }
@@ -455,14 +519,31 @@ export class MediasoupService {
   }
 
   async updateMediaState(kind: string, enabled: boolean) {
+    console.log(
+      `Updating media state: ${kind} ${enabled ? "enabled" : "disabled"}`
+    );
     const producer = this.producers.get(`${this.participantId}-${kind}`);
     if (producer) {
-      if (enabled) {
-        await producer.resume();
-      } else {
-        await producer.pause();
+      console.log(`Found producer for ${kind}:`, producer.id);
+      try {
+        if (enabled) {
+          console.log(`Resuming producer ${producer.id}`);
+          await producer.resume();
+        } else {
+          console.log(`Pausing producer ${producer.id}`);
+          await producer.pause();
+        }
+        console.log(
+          `Emitting media-state-update event: ${kind} ${
+            enabled ? "enabled" : "disabled"
+          }`
+        );
+        this.socket.emit("media-state-update", { kind, enabled });
+      } catch (error) {
+        console.error(`Error updating producer state:`, error);
       }
-      this.socket.emit("media-state-update", { kind, enabled });
+    } else {
+      console.error(`No producer found for ${kind}`);
     }
   }
 

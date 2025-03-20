@@ -298,6 +298,10 @@ export class MediasoupGateway
       return;
     }
 
+    console.log(
+      `Media state update for participant ${participantId}: ${data.kind} ${data.enabled ? 'enabled' : 'disabled'}`,
+    );
+
     // Update media state
     const mediaState = this.participantMediaStates.get(participantId);
     if (mediaState) {
@@ -306,6 +310,7 @@ export class MediasoupGateway
       } else if (data.kind === 'video') {
         mediaState.video = data.enabled;
       }
+      console.log(`Updated media state for ${participantId}:`, mediaState);
     }
 
     const roomId = Array.from(this.rooms.entries()).find(
@@ -321,20 +326,32 @@ export class MediasoupGateway
     const producerMap = this.participantProducers.get(participantId);
     const producerId = producerMap?.[data.kind as 'audio' | 'video'];
 
+    console.log(`Producer map for ${participantId}:`, producerMap);
+    console.log(`Found producer ID for ${data.kind}:`, producerId);
+
     if (producerId) {
       try {
         // Pause/Resume the producer
         if (data.enabled) {
+          console.log(`Resuming producer ${producerId} for ${participantId}`);
           await this.mediasoupService.resumeProducer(producerId);
         } else {
+          console.log(`Pausing producer ${producerId} for ${participantId}`);
           await this.mediasoupService.pauseProducer(producerId);
         }
       } catch (error) {
         console.error('Error updating producer state:', error);
       }
+    } else {
+      console.error(
+        `No producer found for ${participantId} with kind ${data.kind}`,
+      );
     }
 
     // Broadcast the media state change to all other participants in the room
+    console.log(
+      `Broadcasting media state change for ${participantId} to room ${roomId}`,
+    );
     socket.to(roomId).emit('media-state-change', {
       participantId,
       kind: data.kind,
