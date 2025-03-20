@@ -53,6 +53,54 @@ export const VideoRoom: React.FC<VideoRoomProps> = ({ roomId, onLeave }) => {
     }
   };
 
+  const cleanupParticipantResources = (participantId: string) => {
+    console.log(`Cleaning up resources for participant: ${participantId}`);
+
+    // Remove video container from UI
+    const videoContainer = document.getElementById(`video-${participantId}`);
+    if (videoContainer) {
+      videoContainer.remove();
+      console.log(`Removed video container for participant ${participantId}`);
+    }
+
+    // Clean up video element
+    const videoElement = remoteVideosRef.current.get(`${participantId}-video`);
+    if (videoElement) {
+      if (videoElement instanceof HTMLVideoElement) {
+        const stream = videoElement.srcObject as MediaStream;
+        if (stream) {
+          stream.getTracks().forEach((track) => track.stop());
+        }
+      }
+      videoElement.srcObject = null;
+      remoteVideosRef.current.delete(`${participantId}-video`);
+      console.log(`Cleaned up video element for participant ${participantId}`);
+    }
+
+    // Clean up audio element
+    const audioElement = remoteVideosRef.current.get(`${participantId}-audio`);
+    if (audioElement) {
+      if (audioElement instanceof HTMLAudioElement) {
+        const stream = audioElement.srcObject as MediaStream;
+        if (stream) {
+          stream.getTracks().forEach((track) => track.stop());
+        }
+      }
+      audioElement.srcObject = null;
+      remoteVideosRef.current.delete(`${participantId}-audio`);
+      audioElement.remove();
+      console.log(`Cleaned up audio element for participant ${participantId}`);
+    }
+
+    // Clean up consumers in mediasoup service
+    if (mediasoupServiceRef.current) {
+      mediasoupServiceRef.current.removeConsumersForParticipant(participantId);
+      console.log(`Removed consumers for participant ${participantId}`);
+    }
+
+    console.log(`Completed cleanup for participant ${participantId}`);
+  };
+
   useEffect(() => {
     const initializeMedia = async () => {
       try {
@@ -74,6 +122,38 @@ export const VideoRoom: React.FC<VideoRoomProps> = ({ roomId, onLeave }) => {
         // Create MediasoupService instance
         mediasoupServiceRef.current = new MediasoupService();
         const mediasoupService = mediasoupServiceRef.current;
+
+        // Handle disconnection
+        mediasoupService.onDisconnect(() => {
+          console.log("Handling disconnect");
+
+          // Clean up all remote videos and audios
+          const remoteVideosContainer =
+            document.querySelector(".remote-videos");
+          if (remoteVideosContainer) {
+            const videoContainers =
+              remoteVideosContainer.querySelectorAll(".remote-video");
+            videoContainers.forEach((container) => {
+              const participantId = container.id.replace("video-", "");
+              cleanupParticipantResources(participantId);
+            });
+            remoteVideosContainer.innerHTML = ""; // Clear container
+          }
+
+          // Clean up all audio elements
+          const audioElements = document.querySelectorAll("audio");
+          audioElements.forEach((audio) => {
+            if (audio.srcObject) {
+              const stream = audio.srcObject as MediaStream;
+              stream.getTracks().forEach((track) => track.stop());
+              audio.srcObject = null;
+            }
+            audio.remove();
+          });
+
+          // Optionally, you might want to notify the user about the disconnection
+          console.log("Disconnected from the room");
+        });
 
         // Handle media state changes from other participants
         mediasoupService.onMediaStateChange((participantId, kind, enabled) => {
@@ -113,31 +193,8 @@ export const VideoRoom: React.FC<VideoRoomProps> = ({ roomId, onLeave }) => {
 
         // Handle participant left
         mediasoupService.onParticipantLeft((participantId: string) => {
-          console.log(`Removing video for participant: ${participantId}`);
-
-          // Remove video container from UI
-          const videoContainer = document.getElementById(
-            `video-${participantId}`
-          );
-          if (videoContainer) {
-            videoContainer.remove();
-          }
-
-          // Remove from our refs and cleanup
-          const videoKey = `${participantId}-video`;
-          const audioKey = `${participantId}-audio`;
-
-          const videoElement = remoteVideosRef.current.get(videoKey);
-          if (videoElement) {
-            videoElement.srcObject = null;
-            remoteVideosRef.current.delete(videoKey);
-          }
-
-          const audioElement = remoteVideosRef.current.get(audioKey);
-          if (audioElement) {
-            audioElement.srcObject = null;
-            remoteVideosRef.current.delete(audioKey);
-          }
+          console.log(`Participant left: ${participantId}`);
+          cleanupParticipantResources(participantId);
         });
 
         // Set up consumer handler
@@ -248,30 +305,46 @@ export const VideoRoom: React.FC<VideoRoomProps> = ({ roomId, onLeave }) => {
     initializeMedia();
 
     return () => {
-      // Cleanup
+      // Cleanup when component unmounts
       if (mediasoupServiceRef.current) {
         mediasoupServiceRef.current.leaveRoom();
       }
 
-      // Remove all remote videos and audios
-      remoteVideosRef.current.forEach((element) => {
-        element.srcObject = null;
-        element.remove();
+      // Clean up all remote participants
+      remoteVideosRef.current.forEach((_, participantId) => {
+        const actualParticipantId = participantId.split("-")[0];
+        cleanupParticipantResources(actualParticipantId);
       });
-      remoteVideosRef.current.clear();
 
-      // Stop all tracks
+      // Stop local stream
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
       }
     };
   }, [roomId]);
 
-  const handleLeaveRoom = () => {
-    if (mediasoupServiceRef.current) {
-      mediasoupServiceRef.current.leaveRoom();
+  const handleLeaveRoom = async () => {
+    try {
+      // Stop local stream
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
+
+      // Clean up all remote participants
+      remoteVideosRef.current.forEach((_, participantId) => {
+        const actualParticipantId = participantId.split("-")[0];
+        cleanupParticipantResources(actualParticipantId);
+      });
+
+      // Leave the room
+      if (mediasoupServiceRef.current) {
+        await mediasoupServiceRef.current.leaveRoom();
+      }
+
+      onLeave();
+    } catch (error) {
+      console.error("Error leaving room:", error);
     }
-    onLeave();
   };
 
   return (

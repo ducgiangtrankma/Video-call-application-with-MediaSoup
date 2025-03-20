@@ -42,7 +42,53 @@ export class MediasoupGateway
     console.log(`Client disconnected: ${client.id}`);
     const participantId = this.socketToParticipant.get(client.id);
     if (participantId) {
-      this.participantMediaStates.delete(participantId);
+      // Find which room this participant was in
+      let roomId: string | undefined;
+      for (const [rid, participants] of this.rooms.entries()) {
+        if (participants.has(participantId)) {
+          roomId = rid;
+          break;
+        }
+      }
+
+      if (roomId) {
+        // Notify others in the room about the participant leaving
+        client.broadcast.to(roomId).emit('participant-left', {
+          participantId,
+        });
+        console.log(
+          `Notified others about participant ${participantId} disconnecting`,
+        );
+
+        // Close all producers for this participant
+        this.mediasoupService.closeAllProducersForParticipant(participantId);
+        console.log(
+          `Closed all producers for disconnected participant ${participantId}`,
+        );
+
+        // Remove participant from room
+        const room = this.rooms.get(roomId);
+        if (room) {
+          room.delete(participantId);
+          console.log(
+            `Removed participant ${participantId} from room ${roomId}`,
+          );
+
+          // If room is empty, delete it and close all associated resources
+          if (room.size === 0) {
+            this.rooms.delete(roomId);
+            this.mediasoupService.closeRoom(roomId);
+            console.log(
+              `Room ${roomId} is empty, deleted room and closed resources`,
+            );
+          }
+        }
+
+        // Clean up all participant data
+        this.participantProducers.delete(participantId);
+        this.participantNames.delete(participantId);
+        this.participantMediaStates.delete(participantId);
+      }
     }
     this.socketToParticipant.delete(client.id);
   }

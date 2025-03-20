@@ -9,6 +9,7 @@ export class MediasoupService {
   private recvTransport: Transport | null = null;
   private producers = new Map<string, Producer>();
   private consumers = new Map<string, Consumer>();
+  private participantConsumers = new Map<string, Set<string>>();
   private roomId: string | null = null;
   private participantId: string | null = null;
   private username: string | null = null;
@@ -25,6 +26,7 @@ export class MediasoupService {
     kind: string,
     enabled: boolean
   ) => void;
+  private disconnectHandler?: () => void;
   private pendingProducers: {
     producerId: string;
     participantId: string;
@@ -35,6 +37,23 @@ export class MediasoupService {
   constructor() {
     this.device = new Device();
     this.socket = io("http://localhost:3000");
+
+    // Handle disconnection
+    this.socket.on("disconnect", () => {
+      console.log("Disconnected from server");
+      if (this.disconnectHandler) {
+        this.disconnectHandler();
+      }
+      this.cleanupAllResources();
+    });
+
+    this.socket.on("connect_error", (error) => {
+      console.log("Connection error:", error);
+      if (this.disconnectHandler) {
+        this.disconnectHandler();
+      }
+      this.cleanupAllResources();
+    });
 
     this.socket.on(
       "participant-joined",
@@ -551,7 +570,103 @@ export class MediasoupService {
     return this.producers.get(`${this.participantId}-${kind}`);
   }
 
-  getConsumer(participantId: string, kind: string) {
-    return this.consumers.get(`${participantId}-${kind}`);
+  public getConsumer(participantId: string, kind: string) {
+    const consumerId = `${participantId}-${kind}`;
+    return this.consumers.get(consumerId);
+  }
+
+  public removeConsumersForParticipant(participantId: string) {
+    // Get all consumer IDs for this participant
+    const consumerIds = this.participantConsumers.get(participantId);
+    if (!consumerIds) return;
+
+    // Close and remove each consumer
+    consumerIds.forEach((consumerId) => {
+      const consumer = this.consumers.get(consumerId);
+      if (consumer) {
+        consumer.close();
+        this.consumers.delete(consumerId);
+      }
+    });
+
+    // Remove the participant's consumer set
+    this.participantConsumers.delete(participantId);
+    console.log(`Removed all consumers for participant ${participantId}`);
+  }
+
+  public async createConsumer(
+    roomId: string,
+    transportId: string,
+    producerId: string,
+    rtpCapabilities: types.RtpCapabilities,
+    participantId: string
+  ) {
+    try {
+      const { consumer } = await this.socket.emitWithAck("consume", {
+        roomId,
+        transportId,
+        producerId,
+        rtpCapabilities,
+      });
+
+      const consumerObj = await this.recvTransport?.consume({
+        id: consumer.id,
+        producerId: consumer.producerId,
+        kind: consumer.kind,
+        rtpParameters: consumer.rtpParameters,
+      });
+
+      if (consumerObj) {
+        // Store consumer with participant and kind
+        const consumerId = `${participantId}-${consumerObj.kind}`;
+        this.consumers.set(consumerId, consumerObj);
+
+        // Track this consumer for the participant
+        if (!this.participantConsumers.has(participantId)) {
+          this.participantConsumers.set(participantId, new Set());
+        }
+        this.participantConsumers.get(participantId)?.add(consumerId);
+
+        console.log(
+          `Created consumer ${consumerId} for participant ${participantId}`
+        );
+        return consumerObj;
+      }
+    } catch (error) {
+      console.error("Error creating consumer:", error);
+      throw error;
+    }
+  }
+
+  private cleanupAllResources() {
+    // Close all producers
+    this.producers.forEach((producer) => producer.close());
+    this.producers.clear();
+
+    // Close all consumers
+    this.consumers.forEach((consumer) => consumer.close());
+    this.consumers.clear();
+
+    // Clear participant consumers map
+    this.participantConsumers.clear();
+
+    // Close transports
+    if (this.sendTransport) {
+      this.sendTransport.close();
+      this.sendTransport = null;
+    }
+
+    if (this.recvTransport) {
+      this.recvTransport.close();
+      this.recvTransport = null;
+    }
+
+    // Reset state
+    this.isDeviceLoaded = false;
+    console.log("Cleaned up all resources after disconnect");
+  }
+
+  public onDisconnect(handler: () => void) {
+    this.disconnectHandler = handler;
   }
 }

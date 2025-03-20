@@ -222,4 +222,18 @@ export class MediasoupService implements OnModuleInit {
     }
     return this.router.rtpCapabilities;
   }
+
+  closeAllProducersForParticipant(participantId: string): void {
+    // Find all producers associated with this participant
+    for (const [producerId, producerInfo] of this.producers.entries()) {
+      const participantProducerId =
+        this.participantProducers.get(participantId);
+      if (participantProducerId === producerId) {
+        producerInfo.producer.close();
+        this.producers.delete(producerId);
+      }
+    }
+    // Clear the participant's producer mapping
+    this.participantProducers.delete(participantId);
+  }
 }
