@@ -94,7 +94,11 @@ export class MediasoupService {
 
     this.socket.on(
       "media-state-change",
-      (data: { participantId: string; kind: string; enabled: boolean }) => {
+      async (data: {
+        participantId: string;
+        kind: string;
+        enabled: boolean;
+      }) => {
         console.log(
           `Media state changed for ${data.participantId}: ${data.kind} ${
             data.enabled ? "enabled" : "disabled"
@@ -106,6 +110,28 @@ export class MediasoupService {
             data.kind,
             data.enabled
           );
+        }
+
+        // Get the consumer and update its state
+        const consumer = this.consumers.get(
+          `${data.participantId}-${data.kind}`
+        );
+        if (consumer) {
+          try {
+            if (data.enabled) {
+              await consumer.resume();
+              console.log(
+                `Resumed ${data.kind} consumer for ${data.participantId}`
+              );
+            } else {
+              await consumer.pause();
+              console.log(
+                `Paused ${data.kind} consumer for ${data.participantId}`
+              );
+            }
+          } catch (error) {
+            console.error(`Error updating consumer state:`, error);
+          }
         }
       }
     );

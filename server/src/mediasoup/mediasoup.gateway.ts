@@ -27,6 +27,10 @@ export class MediasoupGateway
   >(); // participantId -> {audio, video} producerIds
   private participantNames = new Map<string, string>(); // participantId -> username
   private socketToParticipant = new Map<string, string>(); // socket.id -> participantId
+  private participantMediaStates = new Map<
+    string,
+    { audio: boolean; video: boolean }
+  >();
 
   constructor(private readonly mediasoupService: MediasoupService) {}
 
@@ -36,6 +40,10 @@ export class MediasoupGateway
 
   handleDisconnect(client: Socket) {
     console.log(`Client disconnected: ${client.id}`);
+    const participantId = this.socketToParticipant.get(client.id);
+    if (participantId) {
+      this.participantMediaStates.delete(participantId);
+    }
     this.socketToParticipant.delete(client.id);
   }
 
@@ -48,6 +56,12 @@ export class MediasoupGateway
       // Store username and socket mapping
       this.participantNames.set(data.participantId, data.username);
       this.socketToParticipant.set(client.id, data.participantId);
+
+      // Initialize media states for new participant
+      this.participantMediaStates.set(data.participantId, {
+        audio: true,
+        video: true,
+      });
 
       // Create room if it doesn't exist
       await this.mediasoupService.createRoom(data.roomId);
@@ -81,10 +95,11 @@ export class MediasoupGateway
         existingParticipants,
       );
 
-      // For each existing participant, notify about their producers
+      // For each existing participant, notify about their producers and media states
       for (const participantId of existingParticipants) {
         const producerMap = this.participantProducers.get(participantId);
         const username = this.participantNames.get(participantId);
+        const mediaState = this.participantMediaStates.get(participantId);
         console.log(`Producers for participant ${participantId}:`, producerMap);
 
         if (producerMap) {
@@ -95,6 +110,14 @@ export class MediasoupGateway
               username,
               kind: 'audio',
             });
+            // Send current audio state
+            if (mediaState) {
+              client.emit('media-state-change', {
+                participantId,
+                kind: 'audio',
+                enabled: mediaState.audio,
+              });
+            }
           }
           if (producerMap.video) {
             client.emit('new-producer', {
@@ -103,6 +126,14 @@ export class MediasoupGateway
               username,
               kind: 'video',
             });
+            // Send current video state
+            if (mediaState) {
+              client.emit('media-state-change', {
+                participantId,
+                kind: 'video',
+                enabled: mediaState.video,
+              });
+            }
           }
         }
       }
@@ -257,7 +288,7 @@ export class MediasoupGateway
   }
 
   @SubscribeMessage('media-state-update')
-  handleMediaStateUpdate(
+  async handleMediaStateUpdate(
     @ConnectedSocket() socket: Socket,
     @MessageBody() data: { kind: string; enabled: boolean },
   ) {
@@ -267,6 +298,16 @@ export class MediasoupGateway
       return;
     }
 
+    // Update media state
+    const mediaState = this.participantMediaStates.get(participantId);
+    if (mediaState) {
+      if (data.kind === 'audio') {
+        mediaState.audio = data.enabled;
+      } else if (data.kind === 'video') {
+        mediaState.video = data.enabled;
+      }
+    }
+
     const roomId = Array.from(this.rooms.entries()).find(
       ([rid, participants]) => participants.has(participantId) && rid,
     )?.[0];
@@ -274,6 +315,23 @@ export class MediasoupGateway
     if (!roomId) {
       console.error('No room found for participant:', participantId);
       return;
+    }
+
+    // Get the producer ID
+    const producerMap = this.participantProducers.get(participantId);
+    const producerId = producerMap?.[data.kind as 'audio' | 'video'];
+
+    if (producerId) {
+      try {
+        // Pause/Resume the producer
+        if (data.enabled) {
+          await this.mediasoupService.resumeProducer(producerId);
+        } else {
+          await this.mediasoupService.pauseProducer(producerId);
+        }
+      } catch (error) {
+        console.error('Error updating producer state:', error);
+      }
     }
 
     // Broadcast the media state change to all other participants in the room

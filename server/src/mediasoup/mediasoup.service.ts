@@ -198,6 +198,24 @@ export class MediasoupService implements OnModuleInit {
     this.participantProducers.set(participantId, producerId);
   }
 
+  async pauseProducer(producerId: string): Promise<void> {
+    const producerInfo = this.producers.get(producerId);
+    if (!producerInfo) {
+      throw new Error(`Producer not found: ${producerId}`);
+    }
+
+    await producerInfo.producer.pause();
+  }
+
+  async resumeProducer(producerId: string): Promise<void> {
+    const producerInfo = this.producers.get(producerId);
+    if (!producerInfo) {
+      throw new Error(`Producer not found: ${producerId}`);
+    }
+
+    await producerInfo.producer.resume();
+  }
+
   getRouterRtpCapabilities() {
     if (!this.router) {
       throw new Error('Router not initialized');
