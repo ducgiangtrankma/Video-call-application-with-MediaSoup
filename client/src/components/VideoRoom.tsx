@@ -1,5 +1,14 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { Button } from "antd";
+import {
+  AudioOutlined,
+  AudioMutedOutlined,
+  VideoCameraOutlined,
+  VideoCameraAddOutlined,
+  CloseOutlined,
+} from "@ant-design/icons";
 import { MediasoupService } from "../services/mediasoup.service";
+import "antd/dist/reset.css";
 import "./VideoRoom.css";
 
 interface VideoRoomProps {
@@ -15,6 +24,34 @@ export const VideoRoom: React.FC<VideoRoomProps> = ({ roomId, onLeave }) => {
   const mediasoupServiceRef = useRef<MediasoupService | null>(null);
   const participantIdRef = useRef<string>(crypto.randomUUID());
   const username = useRef<string>(`User ${Math.floor(Math.random() * 1000)}`);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  const [isAudioEnabled, setIsAudioEnabled] = useState(true);
+  const [isVideoEnabled, setIsVideoEnabled] = useState(true);
+
+  const toggleAudio = () => {
+    if (streamRef.current) {
+      const audioTrack = streamRef.current.getAudioTracks()[0];
+      if (audioTrack) {
+        audioTrack.enabled = !isAudioEnabled;
+        setIsAudioEnabled(!isAudioEnabled);
+        // Notify other users
+        mediasoupServiceRef.current?.updateMediaState("audio", !isAudioEnabled);
+      }
+    }
+  };
+
+  const toggleVideo = () => {
+    if (streamRef.current) {
+      const videoTrack = streamRef.current.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.enabled = !isVideoEnabled;
+        setIsVideoEnabled(!isVideoEnabled);
+        // Notify other users
+        mediasoupServiceRef.current?.updateMediaState("video", !isVideoEnabled);
+      }
+    }
+  };
 
   useEffect(() => {
     const initializeMedia = async () => {
@@ -27,6 +64,8 @@ export const VideoRoom: React.FC<VideoRoomProps> = ({ roomId, onLeave }) => {
           audio: true,
         });
 
+        streamRef.current = stream;
+
         // Display local video
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
@@ -35,6 +74,42 @@ export const VideoRoom: React.FC<VideoRoomProps> = ({ roomId, onLeave }) => {
         // Create MediasoupService instance
         mediasoupServiceRef.current = new MediasoupService();
         const mediasoupService = mediasoupServiceRef.current;
+
+        // Handle media state changes from other participants
+        mediasoupService.onMediaStateChange((participantId, kind, enabled) => {
+          console.log(
+            `Media state changed for ${participantId}: ${kind} ${
+              enabled ? "enabled" : "disabled"
+            }`
+          );
+
+          const container = document.getElementById(`video-${participantId}`);
+          if (container) {
+            if (kind === "video") {
+              if (!enabled) {
+                container.classList.add("video-disabled");
+              } else {
+                container.classList.remove("video-disabled");
+              }
+            } else if (kind === "audio") {
+              const label = document.getElementById(`label-${participantId}`);
+              if (label) {
+                const username = label.textContent?.split(" ")[0] || "";
+                label.textContent = `${username} ${enabled ? "🎤" : "🔇"}`;
+              }
+            }
+          }
+
+          // Get the consumer for this participant and kind
+          const consumer = mediasoupService.getConsumer(participantId, kind);
+          if (consumer) {
+            if (enabled) {
+              consumer.resume();
+            } else {
+              consumer.pause();
+            }
+          }
+        });
 
         // Handle participant left
         mediasoupService.onParticipantLeft((participantId: string) => {
@@ -110,6 +185,7 @@ export const VideoRoom: React.FC<VideoRoomProps> = ({ roomId, onLeave }) => {
 
                 const label = document.createElement("div");
                 label.className = "participant-label";
+                label.id = `label-${participantId}`;
                 label.textContent =
                   username || `User ${participantId.slice(0, 8)}`;
                 videoContainer.appendChild(label);
@@ -183,6 +259,11 @@ export const VideoRoom: React.FC<VideoRoomProps> = ({ roomId, onLeave }) => {
         element.remove();
       });
       remoteVideosRef.current.clear();
+
+      // Stop all tracks
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
     };
   }, [roomId]);
 
@@ -196,7 +277,11 @@ export const VideoRoom: React.FC<VideoRoomProps> = ({ roomId, onLeave }) => {
   return (
     <div className="video-room">
       <div className="video-grid">
-        <div className="video-container local-video">
+        <div
+          className={`video-container local-video ${
+            !isVideoEnabled ? "video-disabled" : ""
+          }`}
+        >
           <video
             ref={localVideoRef}
             autoPlay
@@ -204,13 +289,57 @@ export const VideoRoom: React.FC<VideoRoomProps> = ({ roomId, onLeave }) => {
             muted
             className="video-element"
           />
-          <div className="participant-label">You ({username.current})</div>
+          <div className="participant-label">
+            You ({username.current}) {isAudioEnabled ? "🎤" : "🔇"}
+          </div>
         </div>
         <div className="remote-videos" />
       </div>
-      <button onClick={handleLeaveRoom} className="leave-button">
-        Leave Room
-      </button>
+      <div
+        style={{
+          padding: "20px",
+          backgroundColor: "rgba(0,0,0,0.8)",
+          display: "flex",
+          justifyContent: "center",
+          gap: "20px",
+          position: "fixed",
+          bottom: "20px",
+          left: "50%",
+          transform: "translateX(-50%)",
+          borderRadius: "10px",
+          zIndex: 1000,
+        }}
+      >
+        <Button
+          type={!isAudioEnabled ? "default" : "primary"}
+          shape="circle"
+          icon={!isAudioEnabled ? <AudioMutedOutlined /> : <AudioOutlined />}
+          onClick={toggleAudio}
+          size="large"
+        />
+
+        <Button
+          type={isVideoEnabled ? "primary" : "default"}
+          shape="circle"
+          icon={
+            isVideoEnabled ? (
+              <VideoCameraOutlined />
+            ) : (
+              <VideoCameraAddOutlined />
+            )
+          }
+          onClick={toggleVideo}
+          size="large"
+        />
+
+        <Button
+          danger
+          shape="circle"
+          icon={<CloseOutlined />}
+          onClick={handleLeaveRoom}
+          size="large"
+        />
+      </div>
     </div>
   );
 };

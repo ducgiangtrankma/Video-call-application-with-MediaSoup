@@ -20,6 +20,11 @@ export class MediasoupService {
     kind: "audio" | "video"
   ) => void;
   private participantLeftHandler?: (participantId: string) => void;
+  private mediaStateChangeHandler?: (
+    participantId: string,
+    kind: string,
+    enabled: boolean
+  ) => void;
   private pendingProducers: {
     producerId: string;
     participantId: string;
@@ -86,6 +91,24 @@ export class MediasoupService {
         );
       }
     );
+
+    this.socket.on(
+      "media-state-change",
+      (data: { participantId: string; kind: string; enabled: boolean }) => {
+        console.log(
+          `Media state changed for ${data.participantId}: ${data.kind} ${
+            data.enabled ? "enabled" : "disabled"
+          }`
+        );
+        if (this.mediaStateChangeHandler) {
+          this.mediaStateChangeHandler(
+            data.participantId,
+            data.kind,
+            data.enabled
+          );
+        }
+      }
+    );
   }
 
   private async handleNewProducer(
@@ -134,6 +157,12 @@ export class MediasoupService {
 
   onParticipantLeft(handler: (participantId: string) => void) {
     this.participantLeftHandler = handler;
+  }
+
+  onMediaStateChange(
+    handler: (participantId: string, kind: string, enabled: boolean) => void
+  ) {
+    this.mediaStateChangeHandler = handler;
   }
 
   private async request<T>(
@@ -397,5 +426,25 @@ export class MediasoupService {
     this.roomId = null;
     this.participantId = null;
     this.isDeviceLoaded = false;
+  }
+
+  async updateMediaState(kind: string, enabled: boolean) {
+    const producer = this.producers.get(`${this.participantId}-${kind}`);
+    if (producer) {
+      if (enabled) {
+        await producer.resume();
+      } else {
+        await producer.pause();
+      }
+      this.socket.emit("media-state-update", { kind, enabled });
+    }
+  }
+
+  getProducer(kind: string) {
+    return this.producers.get(`${this.participantId}-${kind}`);
+  }
+
+  getConsumer(participantId: string, kind: string) {
+    return this.consumers.get(`${participantId}-${kind}`);
   }
 }

@@ -4,6 +4,8 @@ import {
   SubscribeMessage,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  ConnectedSocket,
+  MessageBody,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { MediasoupService } from './mediasoup.service';
@@ -24,6 +26,7 @@ export class MediasoupGateway
     { audio?: string; video?: string }
   >(); // participantId -> {audio, video} producerIds
   private participantNames = new Map<string, string>(); // participantId -> username
+  private socketToParticipant = new Map<string, string>(); // socket.id -> participantId
 
   constructor(private readonly mediasoupService: MediasoupService) {}
 
@@ -33,6 +36,7 @@ export class MediasoupGateway
 
   handleDisconnect(client: Socket) {
     console.log(`Client disconnected: ${client.id}`);
+    this.socketToParticipant.delete(client.id);
   }
 
   @SubscribeMessage('join-room')
@@ -41,8 +45,9 @@ export class MediasoupGateway
     data: { roomId: string; participantId: string; username: string },
   ) {
     try {
-      // Store username
+      // Store username and socket mapping
       this.participantNames.set(data.participantId, data.username);
+      this.socketToParticipant.set(client.id, data.participantId);
 
       // Create room if it doesn't exist
       await this.mediasoupService.createRoom(data.roomId);
@@ -201,8 +206,7 @@ export class MediasoupGateway
 
       // Find the room this participant is in
       const roomId = Array.from(this.rooms.entries()).find(
-        ([roomId, participants]) =>
-          participants.has(data.participantId) && roomId,
+        ([rid, participants]) => participants.has(data.participantId) && rid,
       )?.[0];
 
       if (roomId) {
@@ -250,5 +254,33 @@ export class MediasoupGateway
       console.error('Error consuming:', error);
       throw error;
     }
+  }
+
+  @SubscribeMessage('media-state-update')
+  handleMediaStateUpdate(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() data: { kind: string; enabled: boolean },
+  ) {
+    const participantId = this.socketToParticipant.get(socket.id);
+    if (!participantId) {
+      console.error('No participant ID found for socket:', socket.id);
+      return;
+    }
+
+    const roomId = Array.from(this.rooms.entries()).find(
+      ([rid, participants]) => participants.has(participantId) && rid,
+    )?.[0];
+
+    if (!roomId) {
+      console.error('No room found for participant:', participantId);
+      return;
+    }
+
+    // Broadcast the media state change to all other participants in the room
+    socket.to(roomId).emit('media-state-change', {
+      participantId,
+      kind: data.kind,
+      enabled: data.enabled,
+    });
   }
 }

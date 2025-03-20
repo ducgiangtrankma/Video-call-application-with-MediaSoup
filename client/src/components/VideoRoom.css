@@ -22,10 +22,43 @@
   aspect-ratio: 16/9;
 }
 
+.video-disabled {
+  background: #1a1a1a;
+}
+
+.video-disabled video {
+  opacity: 0;
+}
+
+.video-disabled::after {
+  content: "Video disabled";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 500;
+  z-index: 2;
+}
+
+.video-disabled::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  z-index: 1;
+  border-radius: 8px;
+}
+
 .video-element {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transition: opacity 0.3s ease;
 }
 
 .participant-label {
@@ -45,19 +78,73 @@
   display: contents;
 }
 
+.controls {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+  z-index: 1000;
+}
+
+.control-button {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  font-size: 20px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.control-button:hover {
+  background: rgba(0, 0, 0, 0.9);
+  transform: scale(1.1);
+}
+
+.control-button.off {
+  background: #ff4444;
+}
+
+.control-button.off:hover {
+  background: #cc0000;
+}
+
 .leave-button {
-  margin: 20px auto;
-  padding: 12px 24px;
-  background: #dc3545;
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  padding: 10px 20px;
+  background: #ff4444;
   color: white;
   border: none;
-  border-radius: 4px;
+  border-radius: 5px;
   cursor: pointer;
   font-size: 16px;
-  font-weight: 500;
-  transition: background-color 0.2s;
+  transition: all 0.3s ease;
 }
 
 .leave-button:hover {
-  background: #c82333;
+  background: #cc0000;
+  transform: scale(1.05);
+}
+
+/* Ant Design button overrides */
+.ant-btn-circle.ant-btn-lg {
+  min-width: 50px !important;
+  width: 50px !important;
+  height: 50px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.ant-btn-circle.ant-btn-lg .anticon {
+  font-size: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 } 
